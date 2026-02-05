@@ -27,6 +27,10 @@
 #define STRAIGHT_R 195
 #define TURN_SPEED 170
 
+// Obstacle/Person Detection Thresholds
+#define OBSTACLE_THRESHOLD 20 // Front sensor: < 20cm = obstacle
+#define PERSON_THRESHOLD 50   // Rear sensor: > this = person lost
+
 // ===== STATE ENUMS =====
 enum MotionType {
   MOTION_IDLE,
@@ -44,6 +48,10 @@ bool motionPaused = false;
 unsigned long motionStart = 0;
 unsigned long motionDuration = 0;
 unsigned long remainingDuration = 0; // FIX 2: Exact resume timing
+bool pausedByFire = false;
+bool pausedByObstacle = false;
+bool motorsStopped =
+    true; // Track if motors are already stopped (start stopped)
 
 // Sensor Globals (Updated every loop)
 long frontDist = 999;
@@ -176,6 +184,7 @@ bool startMotion(MotionType type, unsigned long duration) {
   currentMotion = type;
   motionDuration = duration;
   motionStart = millis();
+  motorsStopped = false; // Motors are now running
 
   switch (type) {
   case MOTION_FORWARD:
@@ -192,24 +201,38 @@ bool startMotion(MotionType type, unsigned long duration) {
     break;
   default:
     stopMotors();
+    motorsStopped = true;
     break;
   }
   return true; // Successfully started
 }
 
 void executeMotion() {
-  if (currentMotion == MOTION_IDLE || motionPaused ||
-      currentMotion == MOTION_STOPPED)
+  // Guard: Don't execute if idle or stopped
+  if (currentMotion == MOTION_IDLE || currentMotion == MOTION_STOPPED)
     return;
 
+  // Guard: Force stop if paused (shouldn't happen normally)
+  if (motionPaused) {
+    if (!motorsStopped) {
+      stopMotors();
+      motorsStopped = true;
+    }
+    return;
+  }
+
+  // Check if motion timer expired
   if (millis() - motionStart >= motionDuration) {
-    stopMotors();
+    if (!motorsStopped) {
+      stopMotors();
+      motorsStopped = true;
+    }
     currentMotion = MOTION_IDLE;
-    // Tiny settling delay handled by next loop naturally
   }
 }
 
 void resumeMotors(MotionType type) {
+  motorsStopped = false; // Motors are now running
   switch (type) {
   case MOTION_FORWARD:
     moveForward();
@@ -225,6 +248,7 @@ void resumeMotors(MotionType type) {
     break;
   default:
     stopMotors();
+    motorsStopped = true;
     break;
   }
 }
@@ -262,12 +286,28 @@ void readSensors() {
 }
 
 void safetySupervisor() {
+  // ============================================
+  // SMOOTH FIX: Only stop motors ONCE, not every loop
+  // Uses motorsStopped flag to prevent jerky movement
+  // ============================================
+  bool frontBlocked = (frontDist < OBSTACLE_THRESHOLD && frontDist > 0);
+
+  // Helper: Stop motors only if not already stopped
+  auto safeStop = [&]() {
+    if (!motorsStopped) {
+      stopMotors();
+      motorsStopped = true;
+    }
+  };
+
   // 1. FIRE (Highest Priority) - Stops ALL motion
   if (fireState == LOW) { // Fire detected
-    if (!motionPaused) {
-      stopMotors();
-      pausedMotion = currentMotion;
-      // FIX 2: Calculate remaining time
+    safeStop();           // Stop only if running
+    if (!pausedByFire) {
+      pausedMotion =
+          currentMotion != MOTION_IDLE && currentMotion != MOTION_STOPPED
+              ? currentMotion
+              : pausedMotion;
       unsigned long elapsed = millis() - motionStart;
       if (elapsed < motionDuration)
         remainingDuration = motionDuration - elapsed;
@@ -275,6 +315,7 @@ void safetySupervisor() {
         remainingDuration = 0;
 
       motionPaused = true;
+      pausedByFire = true;
       currentMotion = MOTION_STOPPED;
       Serial.println("STATUS: Fire detected! Stopping.");
       Serial.println("EVENT: FIRE_ON");
@@ -282,35 +323,38 @@ void safetySupervisor() {
     beepOnce();
     return;
   }
-  // Fire Cleared Logic
-  // We don't have explicit "Fire Cleared" latch, but if fireState is HIGH and
-  // we are paused... Wait, we need to know WHY we paused. For simplicity: If
-  // paused and path clear -> resume.
 
-  // FIX 3: FRONT only blocks FORWARD (Turns allowed)
-  if (!motionPaused && currentMotion == MOTION_FORWARD && frontDist < 20) {
-    stopMotors();
-    pausedMotion = currentMotion;
+  // 2. OBSTACLE CHECK (Only for FORWARD motion)
+  if (currentMotion == MOTION_FORWARD && frontBlocked) {
+    safeStop(); // Stop only if running
+    if (!pausedByObstacle) {
+      pausedMotion = currentMotion;
+      unsigned long elapsed = millis() - motionStart;
+      if (elapsed < motionDuration)
+        remainingDuration = motionDuration - elapsed;
+      else
+        remainingDuration = 0;
 
-    // FIX 2: Calculate remaining time
-    unsigned long elapsed = millis() - motionStart;
-    if (elapsed < motionDuration)
-      remainingDuration = motionDuration - elapsed;
-    else
-      remainingDuration = 0;
+      motionPaused = true;
+      pausedByObstacle = true;
+      currentMotion = MOTION_STOPPED;
+      Serial.println("STATUS: Obstacle detected! Pausing.");
+      Serial.println("EVENT: OBSTACLE_ON");
+    }
+    return; // Don't process resume while obstacle present
+  }
 
-    motionPaused = true;
-    currentMotion = MOTION_STOPPED;
-    Serial.println("STATUS: Object detected");
+  // Also check if paused by obstacle and obstacle still present
+  if (pausedByObstacle && frontBlocked) {
+    safeStop(); // Keep stopped
     return;
   }
 
-  // 3. REAR (Forward guide check)
-  if (!motionPaused && currentMotion == MOTION_FORWARD && rearDist > 40) {
-    stopMotors();
+  // 3. REAR (Person lost check - only during forward motion)
+  if (!motionPaused && currentMotion == MOTION_FORWARD && rearDist > 40 &&
+      rearDist < 900) {
+    safeStop(); // Stop only if running
     pausedMotion = currentMotion;
-
-    // FIX 2: Calculate remaining time
     unsigned long elapsed = millis() - motionStart;
     if (elapsed < motionDuration)
       remainingDuration = motionDuration - elapsed;
@@ -323,39 +367,50 @@ void safetySupervisor() {
     return;
   }
 
-  // NOTE: User's example code said:
-  // "if (currentMotion == MOTION_BACKWARD && rearBlocked())"
-  // But this is a forward-moving guide robot. I must adapt strictly to
-  // functionality while using structure. The 'functionality' is: Pause if
-  // person is too far behind.
-
-  // 4. RESUME
+  // 4. RESUME - Only if paused and ALL conditions clear
   if (motionPaused) {
-    bool safe = true;
-    if (fireState == LOW)
-      safe = false;
+    bool canResume = true;
 
-    // If we were Forward, check Front and Rear
-    if (pausedMotion == MOTION_FORWARD) {
-      if (frontDist < 25)
-        safe = false;
-      if (rearDist > 40)
-        safe = false;
+    // Check fire first
+    if (fireState == LOW) {
+      canResume = false;
+    } else if (pausedByFire) {
+      pausedByFire = false;
+      Serial.println("EVENT: FIRE_OFF");
     }
-    // Turns are always safe to resume if Fire is gone
 
-    if (safe) {
+    // CRITICAL FIX #1: Check obstacle - clear flag regardless of motion type
+    if (frontBlocked) {
+      canResume = false;
+    } else if (pausedByObstacle) {
+      // Clear obstacle flag even if motion type has changed
+      pausedByObstacle = false;
+      Serial.println("EVENT: OBSTACLE_OFF");
+    }
+
+    // Check person (rear sensor) - only if paused from forward motion
+    if (pausedMotion == MOTION_FORWARD) {
+      if (rearDist > 40 && rearDist < 900) {
+        canResume = false;
+      }
+    }
+
+    // RESUME if all clear
+    if (canResume && remainingDuration > 0) {
       motionPaused = false;
       currentMotion = pausedMotion;
-
-      // FIX 2: Use remaining time
       motionStart = millis();
       motionDuration = remainingDuration;
 
       resumeMotors(pausedMotion);
       Serial.println("STATUS: Resuming");
-      if (fireState == HIGH)
-        Serial.println("EVENT: FIRE_OFF");
+    } else if (canResume && remainingDuration == 0) {
+      // CRITICAL FIX #2: Clear ALL pause flags when completing
+      motionPaused = false;
+      pausedByFire = false;
+      pausedByObstacle = false;
+      currentMotion = MOTION_IDLE;
+      Serial.println("STATUS: Step complete");
     }
   }
 }

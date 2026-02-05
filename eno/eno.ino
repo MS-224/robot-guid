@@ -23,6 +23,7 @@ String currentStatus = "System ready"; // Human readable status
 String currentPosition = "ORIGIN";
 String unparsedData = "F:-- R:--"; // Raw sensor string
 bool isFire = false;
+bool isObstacle = false;
 bool isMoving = false;
 
 // ===== COMPLETE DASHBOARD HTML =====
@@ -34,7 +35,6 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
   <title>Guide Robot</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
-    /* ... (STYLES SAME AS BEFORE) ... */
     :root { --bg: #0b0f1f; --panel: rgba(255,255,255,0.08); --border: rgba(255,255,255,0.18); --text: #eaeaff; --accent: #7f5cff; }
     * { box-sizing: border-box; font-family: "Segoe UI", sans-serif; }
     body { margin: 0; background-color: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
@@ -60,7 +60,8 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
     .command-status { font-size: 14px; grid-column: 1/2; grid-row: 3/4; display: flex; flex-direction: column; }
     .status-log { margin-top: 8px; flex: 1; overflow-y: auto; padding: 8px; background: rgba(0,0,0,0.35); border-radius: 8px; font-size: 13px; font-family: monospace; }
     .sensor-status { grid-column: 2/3; grid-row: 3/4; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-    .sensor-box { background: rgba(255,255,255,0.12); border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; }
+    .sensor-box { background: rgba(255,255,255,0.12); border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; transition: all 0.3s ease; }
+    .sensor-box.warning { background: rgba(255,140,0,0.25); border-color: #ff8c00; color: #ff8c00; }
   </style>
 </head>
 <body>
@@ -136,87 +137,76 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
 
   <script>
     // ================= ROUTES & NODES =================
-    const NODES = {
+    var NODES = {
       ORIGIN: {x:100,y:100}, LAB: {x:900,y:100}, OFFICE: {x:900,y:400}, CANTEEN: {x:500,y:400},
       MID_TOP: {x:500,y:100}, CORNER_BL: {x:100,y:400} 
     };
-    const ROUTES = {
+    var ROUTES = {
       ORIGIN: { LAB: ["ORIGIN","MID_TOP","LAB"], OFFICE: ["ORIGIN","MID_TOP","LAB","OFFICE"], CANTEEN: ["ORIGIN","CORNER_BL","CANTEEN"], ORIGIN:["ORIGIN"]},
       LAB: { ORIGIN: ["LAB","MID_TOP","ORIGIN"], OFFICE: ["LAB","OFFICE"], CANTEEN: ["LAB","OFFICE","CANTEEN"], LAB:["LAB"]},
       OFFICE: { ORIGIN: ["OFFICE","CANTEEN","CORNER_BL","ORIGIN"], LAB: ["OFFICE","LAB"], CANTEEN: ["OFFICE","CANTEEN"], OFFICE:["OFFICE"]},
       CANTEEN: { ORIGIN: ["CANTEEN","CORNER_BL","ORIGIN"], LAB: ["CANTEEN","OFFICE","LAB"], OFFICE: ["CANTEEN","OFFICE"], CANTEEN:["CANTEEN"]}
     };
 
-    let currentLocation = "ORIGIN";
-    let isMoving = false;
-    let lastStatus = "";
-    let activeLines = [];
-    let startLocation = "ORIGIN";  // FIX: Track where we started from
+    var currentLocation = "ORIGIN";
+    var isMoving = false;
+    var lastStatus = "";
+    var activeLines = [];
+    var startLocation = "ORIGIN";
 
-    const goBtn = document.getElementById("goBtn");
-    const stopBtn = document.getElementById("stopBtn");
-    const destSelect = document.getElementById("destinationSelect");
-    const statusLog = document.getElementById("statusLog");
-    const stateText = document.getElementById("stateText");
-    const robotEl = document.getElementById("robot");
-    const fireDetectedBox = document.getElementById("fireDetectedBox");
-    const noFireBox = document.getElementById("noFireBox");
-    const svgEl = document.querySelector("svg");
+    var goBtn = document.getElementById("goBtn");
+    var stopBtn = document.getElementById("stopBtn");
+    var destSelect = document.getElementById("destinationSelect");
+    var statusLog = document.getElementById("statusLog");
+    var stateText = document.getElementById("stateText");
+    var robotEl = document.getElementById("robot");
+    var fireDetectedBox = document.getElementById("fireDetectedBox");
+    var noFireBox = document.getElementById("noFireBox");
+    var svgEl = document.querySelector("svg");
     
     // Sensor Els
-    const fVal = document.getElementById("frontVal");
-    const rVal = document.getElementById("rearVal");
-    const obstacleVal = document.getElementById("obstacleVal");
-    const pVal = document.getElementById("personVal");
+    var fVal = document.getElementById("frontVal");
+    var rVal = document.getElementById("rearVal");
+    var obstacleVal = document.getElementById("obstacleVal");
+    var pVal = document.getElementById("personVal");
 
     function log(msg) {
-      const line = document.createElement("div");
-      line.textContent = `> ${msg}`;
+      var line = document.createElement("div");
+      line.textContent = "> " + msg;
       statusLog.appendChild(line);
       statusLog.scrollTop = statusLog.scrollHeight;
-      stateText.innerText = `State: ${msg}`;
+      stateText.innerText = "State: " + msg;
     }
 
-    goBtn.addEventListener("click", () => {
-      const dest = destSelect.value;
+    goBtn.onclick = function() {
+      var dest = destSelect.value;
       if (dest === currentLocation) { log("Already at " + dest); return; }
       if (isMoving) { log("Already moving"); return; }
-      const map = { "ORIGIN":"O", "LAB":"L", "OFFICE":"F", "CANTEEN":"C" };
-      
-      // FIX: Remember where we're starting from
+      var map = { "ORIGIN":"O", "LAB":"L", "OFFICE":"F", "CANTEEN":"C" };
       startLocation = currentLocation;
-      isMoving = true;  // Set moving immediately
-      
-      fetch(`/command?cmd=GO ${map[dest]}`);
-    });
+      isMoving = true;
+      fetch("/command?cmd=GO " + map[dest]);
+    };
     
-    stopBtn.addEventListener("click", () => {
+    stopBtn.onclick = function() {
       isMoving = false;
-      fetch(`/command?cmd=STOP`);
-    });
+      fetch("/command?cmd=STOP");
+    };
 
     // POLLING
-    setInterval(() => {
+    setInterval(function() {
       fetch("/status")
-        .then(res => res.json())
-        .then(data => {
-          // data = { status, position, moving, fire, sensors }
-
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
           // SYNC: Always update currentLocation from server
           if (data.position && data.position !== currentLocation) {
-            const newLoc = data.position;
-            
-            // FIX: Always animate if we have a valid path from startLocation
+            var newLoc = data.position;
             if (ROUTES[startLocation] && ROUTES[startLocation][newLoc]) {
               animateRobot(ROUTES[startLocation][newLoc]);
             }
-            
-            // Update current location
             currentLocation = newLoc;
             isMoving = false;
-            
-            // Update robot position on map (after animation draws path)
-            const pos = NODES[currentLocation];
+            var pos = NODES[currentLocation];
             if (pos) {
               robotEl.setAttribute("cx", pos.x);
               robotEl.setAttribute("cy", pos.y);
@@ -228,7 +218,6 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
             log(data.status);
             lastStatus = data.status;
 
-            // Handle Start - update startLocation to current position
             if (data.status === "Start guiding") {
                startLocation = currentLocation;
                isMoving = true;
@@ -242,24 +231,14 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
                pVal.innerText = "Ppl: OK";
                pVal.style.color = "white";
             }
-            
-            // Update obstacle status based on UNO status messages
-            if (data.status === "Object detected") {
-               obstacleVal.innerText = "Obstacle!";
-               obstacleVal.style.color = "orange";
-            } else if (data.status === "Resuming" || data.status === "Start guiding" || data.status === "Destination reached") {
-               obstacleVal.innerText = "Obstacle: OK";
-               obstacleVal.style.color = "white";
-            }
           }
 
-          // 2. Update Sensor Displays and Real-time Obstacle Detection
+          // 2. Update Sensor Displays
           if(data.sensors) {
-             const parts = data.sensors.split(' ');
+             var parts = data.sensors.split(' ');
              if(parts.length >= 2) {
-                 // Parse front and rear values
-                 const frontMatch = parts[0].match(/F:(\d+)/);
-                 const rearMatch = parts[1].match(/R:(\d+)/);
+                 var frontMatch = parts[0].match(/F:(\d+)/);
+                 var rearMatch = parts[1].match(/R:(\d+)/);
                  
                  var frontDist = 999;
                  var rearDist = 999;
@@ -267,26 +246,16 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
                  if (frontMatch) frontDist = parseInt(frontMatch[1]);
                  if (rearMatch) rearDist = parseInt(rearMatch[1]);
                  
-                 // Display sensor values (replace 999 with --)
                  if (frontDist >= 999) {
                      fVal.innerText = "F: --";
                  } else {
-                     fVal.innerText = "F: " + frontDist;
+                     fVal.innerText = "F: " + frontDist + "cm";
                  }
                  
                  if (rearDist >= 999) {
                      rVal.innerText = "R: --";
                  } else {
-                     rVal.innerText = "R: " + rearDist;
-                 }
-                 
-                 // Real-time obstacle detection from front sensor (< 20cm - matches UNO)
-                 if (frontDist < 20 && frontDist > 0) {
-                     obstacleVal.innerText = "Obstacle!";
-                     obstacleVal.style.color = "orange";
-                 } else if (frontDist >= 20 || frontDist >= 999) {
-                     obstacleVal.innerText = "Obstacle: OK";
-                     obstacleVal.style.color = "white";
+                     rVal.innerText = "R: " + rearDist + "cm";
                  }
              }
           }
@@ -299,47 +268,54 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
               fireDetectedBox.className = "fire-status-box";
               noFireBox.className = "fire-status-box safe";
           }
+          
+          // 4. OBSTACLE STATUS - Use boolean flag from ESP32 (most reliable!)
+          // This is set by EVENT:OBSTACLE_ON/OFF from Arduino
+          if (data.obstacle) {
+              obstacleVal.innerText = "⚠ OBSTACLE!";
+              obstacleVal.className = "sensor-box warning";
+          } else {
+              obstacleVal.innerText = "Obstacle: OK";
+              obstacleVal.className = "sensor-box";
+          }
         })
-        .catch(e => {});
+        .catch(function(e) {});
     }, 1000);
 
     function animateRobot(path) {
        if(!path || path.length === 0) return;
-       
-       // 1. Draw the path
        drawPath(path);
-
-       // 2. Jump to end (Simple, no animation)
-       const end = NODES[path[path.length-1]];
+       var end = NODES[path[path.length-1]];
        if(end) {
          robotEl.setAttribute("cx", end.x);
          robotEl.setAttribute("cy", end.y);
        }
-
-       // 3. Clear path after 3 seconds
-       setTimeout(() => {
-           activeLines.forEach(l => l.remove());
+       setTimeout(function() {
+           for(var i=0; i<activeLines.length; i++) {
+             activeLines[i].remove();
+           }
            activeLines = [];
        }, 3000);
     }
 
     function drawPath(nodeNames) {
-      // Clear old lines
-      activeLines.forEach(line => line.remove());
+      for(var i=0; i<activeLines.length; i++) {
+        activeLines[i].remove();
+      }
       activeLines = [];
 
-      for (let i = 0; i < nodeNames.length - 1; i++) {
-        const startNode = NODES[nodeNames[i]];
-        const endNode = NODES[nodeNames[i + 1]];
+      for (var i = 0; i < nodeNames.length - 1; i++) {
+        var startNode = NODES[nodeNames[i]];
+        var endNode = NODES[nodeNames[i + 1]];
         
         if(!startNode || !endNode) continue;
 
-        const x1 = startNode.x;
-        const y1 = startNode.y;
-        const x2 = endNode.x;
-        const y2 = endNode.y;
+        var x1 = startNode.x;
+        var y1 = startNode.y;
+        var x2 = endNode.x;
+        var y2 = endNode.y;
 
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
         line.setAttribute("x1", x1);
         line.setAttribute("y1", y1);
         line.setAttribute("x2", x2);
@@ -377,6 +353,7 @@ void handleStatusRoute() {
   json += "\"position\":\"" + currentPosition + "\",";
   json += "\"moving\":" + String(isMoving ? "true" : "false") + ",";
   json += "\"fire\":" + String(isFire ? "true" : "false") + ",";
+  json += "\"obstacle\":" + String(isObstacle ? "true" : "false") + ",";
   json += "\"sensors\":\"" + unparsedData + "\"";
   json += "}";
 
@@ -384,8 +361,8 @@ void handleStatusRoute() {
 }
 
 void setup() {
-  Serial.begin(115200);  // FIX
-  Serial.setTimeout(50); // FIX
+  Serial.begin(115200);
+  Serial.setTimeout(50);
 
   pinMode(4, OUTPUT);   // FIX
   digitalWrite(4, LOW); // FIX
@@ -394,7 +371,7 @@ void setup() {
   // WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
   WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
-  WiFi.begin(ssid, password); // FIX (no blocking loop)
+  WiFi.begin(ssid, password);
 
   server.on("/", handleRoot);
   server.on("/status", handleStatusRoute);
@@ -430,6 +407,10 @@ void loop() {
         isFire = true;
       if (msg.indexOf("FIRE_OFF") >= 0)
         isFire = false;
+      if (msg.indexOf("OBSTACLE_ON") >= 0)
+        isObstacle = true;
+      if (msg.indexOf("OBSTACLE_OFF") >= 0)
+        isObstacle = false;
     }
   }
 
