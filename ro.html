@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Guide Robot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    /* ... (STYLES SAME AS BEFORE) ... */
+    :root { --bg: #0b0f1f; --panel: rgba(255,255,255,0.08); --border: rgba(255,255,255,0.18); --text: #eaeaff; --accent: #7f5cff; }
+    * { box-sizing: border-box; font-family: "Segoe UI", sans-serif; }
+    body { margin: 0; background-color: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+    .dashboard { display: grid; grid-template-rows: 60px 1fr; height: 100vh; padding: 12px; gap: 12px; }
+    .header { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 600; }
+    .main { display: grid; grid-template-columns: 320px 1fr; grid-template-rows: auto 1fr 140px; gap: 12px; height: 100%; min-height: 0; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px; overflow: hidden; }
+    .panel-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    .control-panel { grid-column: 1/2; grid-row: 1/2; display: flex; flex-direction: column; gap: 10px; }
+    .control-panel button, .control-panel select { width: 100%; padding: 12px; background: rgba(30,30,60,0.9); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; }
+    .go { background: linear-gradient(90deg, #4dd2ff, #7f5cff); border: none; font-weight: bold; }
+    .go:disabled { opacity: 0.5; }
+    .stop { background: linear-gradient(90deg, #ffb347, #ff7043); border: none; font-weight: bold; }
+    .map { grid-column: 2/3; grid-row: 1/3; position: relative; width: 100%; height: 100%; }
+    .fire { grid-column: 1/2; grid-row: 2/3; display: flex; flex-direction: column; gap: 8px; }
+    .fire-image-container { flex: 1; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); border-radius: 10px; overflow: hidden; }
+    .fire-image-container svg { max-width: 100%; max-height: 100%; }
+    .command-status { font-size: 14px; grid-column: 1/2; grid-row: 3/4; display: flex; flex-direction: column; }
+    .status-log { margin-top: 8px; flex: 1; overflow-y: auto; padding: 8px; background: rgba(0,0,0,0.35); border-radius: 8px; font-size: 13px; font-family: monospace; }
+    .sensor-status { grid-column: 2/3; grid-row: 3/4; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .sensor-box { background: rgba(255,255,255,0.12); border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="dashboard">
+    <div class="header">Indoor Guidance Robot</div>
+    <div class="main">
+      <div class="panel control-panel">
+        <div class="panel-title">Control Panel</div>
+        <select id="destinationSelect">
+          <option value="ORIGIN">ORIGIN</option>
+          <option value="LAB">LAB</option>
+          <option value="OFFICE">OFFICE</option>
+          <option value="CANTEEN">CANTEEN</option>
+        </select>
+        <button class="go" id="goBtn">GO</button>
+        <button class="stop" id="stopBtn">STOP</button>
+      </div>
+
+      <div class="panel map">
+        <svg id="mapSvg" width="100%" height="100%" viewBox="0 0 1000 520">
+          <path d="M142 100 L858 100" stroke="black" stroke-width="4" fill="none"/>
+          <path d="M500 100 L500 400" stroke="black" stroke-width="4" fill="none"/>
+          <path d="M100 142 L100 400" stroke="black" stroke-width="4" fill="none"/>
+          <path d="M100 400 L458 400" stroke="black" stroke-width="4" fill="none"/>
+          <path d="M542 400 L858 400" stroke="black" stroke-width="4" fill="none"/>
+          <path d="M900 142 L900 358" stroke="black" stroke-width="4" fill="none"/>
+          <circle cx="100" cy="100" r="40" fill="#7f5cff" stroke="black" stroke-width="4"/>
+          <circle cx="900" cy="100" r="40" fill="#7f5cff" stroke="black" stroke-width="4"/>
+          <circle cx="900" cy="400" r="40" fill="#7f5cff" stroke="black" stroke-width="4"/>
+          <circle cx="500" cy="400" r="40" fill="#7f5cff" stroke="black" stroke-width="4"/>
+          <text x="100" y="105" text-anchor="middle" font-weight="bold">Origin</text>
+          <text x="900" y="105" text-anchor="middle" font-weight="bold">Lab</text>
+          <text x="900" y="405" text-anchor="middle" font-weight="bold">Office</text>
+          <text x="500" y="405" text-anchor="middle" font-weight="bold">Canteen</text>
+          <circle id="robot" cx="100" cy="100" r="15" fill="#ff3b6a" stroke="#ffffff" stroke-width="3">
+            <animate attributeName="r" values="15;18;15" dur="1s" repeatCount="indefinite" />
+          </circle>
+        </svg>
+      </div>
+
+      <div class="panel fire">
+        <b>Fire Status</b>
+        <div class="fire-image-container">
+          <svg id="noFireSvg" width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+            <rect width="200" height="200" fill="#0f5f2f"/>
+            <circle cx="100" cy="80" r="45" fill="none" stroke="#7CFFB2" stroke-width="6"/>
+            <path d="M65 45 L135 115" stroke="#7CFFB2" stroke-width="6" fill="none"/>
+            <path d="M100 45 C92 60, 75 70, 85 95 C90 108, 110 108, 115 95 C125 70, 108 60, 100 45 Z M100 65 C96 72, 95 78, 100 85 C105 78, 104 72, 100 65 Z" fill="#7CFFB2"/>
+            <text x="100" y="145" text-anchor="middle" font-size="16" font-family="Arial" fill="#E6FFE6">NO FIRE</text>
+            <text x="100" y="165" text-anchor="middle" font-size="10" font-family="Arial" fill="#E6FFE6">ALL SYSTEMS SAFE</text>
+          </svg>
+          <svg id="fireSvg" style="display:none;" width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+            <rect width="200" height="200" fill="#7A0B0B"/>
+            <circle cx="100" cy="80" r="45" fill="none" stroke="#FF6B6B" stroke-width="6"/>
+            <path d="M100 45 C92 60, 75 70, 85 95 C90 108, 110 108, 115 95 C125 70, 108 60, 100 45 Z M100 65 C96 72, 95 78, 100 85 C105 78, 104 72, 100 65 Z" fill="#FF6B6B"/>
+            <text x="100" y="145" text-anchor="middle" font-size="16" font-family="Arial" fill="#FFECEC">FIRE DETECTED</text>
+            <text x="100" y="165" text-anchor="middle" font-size="10" font-family="Arial" fill="#FFECEC">TAKE ACTION</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="panel command-status">
+        <b>Status Log</b>
+        <div class="status-log" id="statusLog"></div>
+        <div id="stateText" style="margin-top: 5px; font-weight: bold;">State: READY</div>
+      </div>
+
+      <div class="panel sensor-status">
+        <div class="sensor-box" id="frontVal">F: --</div>
+        <div class="sensor-box" id="rearVal">R: --</div>
+        <div class="sensor-box" id="obstacleVal">Obstacle: OK</div>
+        <div class="sensor-box" id="personVal">Ppl: OK</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+ 
+    // ================= ROUTES & NODES =================
+    var NODES = {
+      ORIGIN: {x:100,y:100}, LAB: {x:900,y:100}, OFFICE: {x:900,y:400}, CANTEEN: {x:500,y:400},
+      MID_TOP: {x:500,y:100}, CORNER_BL: {x:100,y:400} 
+    };
+    var ROUTES = {
+      ORIGIN: { LAB: ["ORIGIN","MID_TOP","LAB"], OFFICE: ["ORIGIN","MID_TOP","LAB","OFFICE"], CANTEEN: ["ORIGIN","CORNER_BL","CANTEEN"], ORIGIN:["ORIGIN"]},
+      LAB: { ORIGIN: ["LAB","MID_TOP","ORIGIN"], OFFICE: ["LAB","OFFICE"], CANTEEN: ["LAB","OFFICE","CANTEEN"], LAB:["LAB"]},
+      OFFICE: { ORIGIN: ["OFFICE","CANTEEN","CORNER_BL","ORIGIN"], LAB: ["OFFICE","LAB"], CANTEEN: ["OFFICE","CANTEEN"], OFFICE:["OFFICE"]},
+      CANTEEN: { ORIGIN: ["CANTEEN","CORNER_BL","ORIGIN"], LAB: ["CANTEEN","OFFICE","LAB"], OFFICE: ["CANTEEN","OFFICE"], CANTEEN:["CANTEEN"]}
+    };
+
+    var currentLocation = "ORIGIN";
+    var isMoving = false;
+    var lastStatus = "";
+    var activeLines = [];
+    var startLocation = "ORIGIN";
+
+    var goBtn = document.getElementById("goBtn");
+    var stopBtn = document.getElementById("stopBtn");
+    var destSelect = document.getElementById("destinationSelect");
+    var statusLog = document.getElementById("statusLog");
+    var stateText = document.getElementById("stateText");
+    var robotEl = document.getElementById("robot");
+    var noFireSvg = document.getElementById("noFireSvg");
+    var fireSvg = document.getElementById("fireSvg");
+    var mapSvg = document.getElementById("mapSvg");
+    
+    // Sensor Els
+    var fVal = document.getElementById("frontVal");
+    var rVal = document.getElementById("rearVal");
+    var obstacleEl = document.getElementById("obstacleVal");
+    var pVal = document.getElementById("personVal");
+
+    function log(msg) {
+      var el = document.createElement("div");
+      el.textContent = "> " + msg;
+      statusLog.appendChild(el);
+      statusLog.scrollTop = statusLog.scrollHeight;
+      stateText.innerText = "State: " + msg;
+    }
+
+    goBtn.addEventListener("click", function() {
+      var dest = destSelect.value;
+      if (dest === currentLocation) { log("Already at " + dest); return; }
+      if (isMoving) { log("Already moving"); return; }
+      var cmdMap = { "ORIGIN":"O", "LAB":"L", "OFFICE":"F", "CANTEEN":"C" };
+      
+      // FIX: Remember where we're starting from
+      startLocation = currentLocation;
+      isMoving = true;  // Set moving immediately
+      
+      fetch("/command?cmd=GO " + cmdMap[dest]);
+    });
+    
+    stopBtn.addEventListener("click", function() {
+      isMoving = false;
+      fetch("/command?cmd=STOP");
+    });
+
+    // POLLING
+    setInterval(function() {
+      fetch("/status")
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          // data = { status, position, moving, fire, sensors }
+
+          // SYNC: Always update currentLocation from server
+          if (data.position && data.position !== currentLocation) {
+            var newLoc = data.position;
+            
+            // FIX: Always animate if we have a valid path from startLocation
+            if (ROUTES[startLocation] && ROUTES[startLocation][newLoc]) {
+              animateRobot(ROUTES[startLocation][newLoc]);
+            }
+            
+            // Update current location
+            currentLocation = newLoc;
+            isMoving = false;
+            
+            // Update robot position on map (after animation draws path)
+            var pos = NODES[currentLocation];
+            if (pos) {
+              robotEl.setAttribute("cx", pos.x);
+              robotEl.setAttribute("cy", pos.y);
+            }
+          }
+
+          // 1. Log Status Changes
+          if (data.status !== lastStatus) {
+            log(data.status);
+            lastStatus = data.status;
+
+            // Handle Start - update startLocation to current position
+            if (data.status === "Start guiding") {
+               startLocation = currentLocation;
+               isMoving = true;
+            }
+            
+            // Update person status
+            if (data.status === "Person lost (Waiting)") {
+               pVal.innerText = "Ppl: LOST";
+               pVal.style.color = "orange";
+            } else if (data.status === "Resuming" || data.status === "Start guiding" || data.status === "Destination reached") {
+               pVal.innerText = "Ppl: OK";
+               pVal.style.color = "white";
+            }
+          }
+
+          // 2. Update Sensors
+          if(data.sensors) {
+             var parts = data.sensors.split(' ');
+             if(parts.length >= 2) {
+                 fVal.innerText = parts[0];
+                 rVal.innerText = parts[1];
+             }
+          }
+
+          // 3. Fire Status - Toggle SVGs
+          if (noFireSvg && fireSvg) {
+            if (data.fire) {
+                noFireSvg.style.display = "none";
+                fireSvg.style.display = "block";
+            } else {
+                noFireSvg.style.display = "block";
+                fireSvg.style.display = "none";
+            }
+          }
+
+          // 4. Obstacle Detection Status (based on front sensor)
+          if(data.sensors && obstacleEl) {
+              var sensorParts = data.sensors.split(' ');
+              if(sensorParts.length >= 1 && sensorParts[0].indexOf('F:') === 0) {
+                  var frontVal = sensorParts[0].substring(2);
+                  if(frontVal !== '--') {
+                      var frontDist = parseInt(frontVal, 10);
+                      if(!isNaN(frontDist) && frontDist < 10) {
+                          obstacleEl.innerText = "Obstacle: DETECTED";
+                          obstacleEl.style.color = "#FF6B6B";
+                      } else {
+                          obstacleEl.innerText = "Obstacle: OK";
+                          obstacleEl.style.color = "white";
+                      }
+                  }
+              }
+          }
+        })
+        .catch(function(e) {});
+    }, 1000);
+
+    function animateRobot(path) {
+       if(!path || path.length === 0) return;
+       
+       // 1. Draw the path
+       drawPath(path);
+
+       // 2. Jump to end (Simple, no animation)
+       var end = NODES[path[path.length-1]];
+       if(end) {
+         robotEl.setAttribute("cx", end.x);
+         robotEl.setAttribute("cy", end.y);
+       }
+
+       // 3. Clear path after 3 seconds
+       setTimeout(function() {
+           activeLines.forEach(function(l) { l.remove(); });
+           activeLines = [];
+       }, 3000);
+    }
+
+    function drawPath(nodeNames) {
+      // Clear old path elements
+      activeLines.forEach(function(el) { el.remove(); });
+      activeLines = [];
+
+      for (var i = 0; i < nodeNames.length - 1; i++) {
+        var startNode = NODES[nodeNames[i]];
+        var endNode = NODES[nodeNames[i + 1]];
+        
+        if(!startNode || !endNode) continue;
+
+        var x1 = startNode.x;
+        var y1 = startNode.y;
+        var x2 = endNode.x;
+        var y2 = endNode.y;
+
+        var pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        pathEl.setAttribute("d", "M" + x1 + " " + y1 + " L" + x2 + " " + y2);
+        pathEl.setAttribute("stroke", "#7f5cff");
+        pathEl.setAttribute("stroke-width", "6");
+        pathEl.setAttribute("stroke-linecap", "round");
+        pathEl.setAttribute("opacity", "0.8");
+        pathEl.setAttribute("fill", "none");
+
+        if(mapSvg && robotEl) {
+          mapSvg.insertBefore(pathEl, robotEl);
+        }
+        activeLines.push(pathEl);
+      }
+    }
+  })();
+  </script>
+</body>
+</html>
